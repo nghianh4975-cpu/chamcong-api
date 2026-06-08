@@ -63,6 +63,11 @@ class SalaryService:
                     if out_diff > 0:
                         overtime_hours += out_diff
 
+            existing = self.db.query(SalaryRecord).filter(
+                SalaryRecord.employee_id == emp.id,
+                SalaryRecord.month == month
+            ).first()
+
             emp_type = emp.employee_type or "fulltime"
             base_salary = emp.base_salary or 0
             hourly_rate = emp.hourly_rate or 0
@@ -72,7 +77,6 @@ class SalaryService:
             # --- FULL TIME: tinh luong theo ngay ---
             if emp_type == "fulltime":
                 daily_rate = base_salary / work_days_count if work_days_count > 0 else 0
-                # Khong tru tien tu dong - chi ghi nhan thong tin de admin xem
                 late_deduction = 0
                 absent_deduction = 0
                 admin_deduction = existing.admin_deduction if existing else 0
@@ -91,11 +95,6 @@ class SalaryService:
                 late_deduction = 0
                 absent_deduction = 0
                 overtime_pay = 0
-
-            existing = self.db.query(SalaryRecord).filter(
-                SalaryRecord.employee_id == emp.id,
-                SalaryRecord.month == month
-            ).first()
 
             if existing:
                 existing.base_salary = base_salary
