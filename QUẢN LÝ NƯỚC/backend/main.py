@@ -19,15 +19,27 @@ from backend.middleware.ip_whitelist import IPRestrictMiddleware, get_allowed_ip
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
 
-    # Migration: thêm cột pass_time_amount nếu chưa có
     from backend.database import engine as _engine
     from sqlalchemy import text
     with _engine.connect() as conn:
+        # Migration: thêm cột pass_time_amount nếu chưa có
         try:
             conn.execute(text("ALTER TABLE attendance_records ADD COLUMN pass_time_amount FLOAT"))
             conn.commit()
         except Exception:
             pass  # Cột đã tồn tại
+
+        # Migration: thêm cột admin_deduction + reason nếu chưa có
+        try:
+            conn.execute(text("ALTER TABLE salary_records ADD COLUMN admin_deduction FLOAT DEFAULT 0"))
+            conn.commit()
+        except Exception:
+            pass
+        try:
+            conn.execute(text("ALTER TABLE salary_records ADD COLUMN admin_deduction_reason TEXT"))
+            conn.commit()
+        except Exception:
+            pass
 
     from backend.database import SessionLocal
     db = SessionLocal()
