@@ -919,6 +919,7 @@ function renderSidebar(role) {
     { path: '/admin/employees', icon: 'users', label: 'Nhân viên', roles: ['admin'] },
     { path: '/admin/attendance', icon: 'calendar-check', label: 'Chấm công', roles: ['admin', 'manager'] },
     { path: '/admin/salary', icon: 'wallet', label: 'Lương', roles: ['admin', 'manager'] },
+    { path: '#settings', icon: 'settings', label: 'Cài đặt', roles: ['admin'], action: 'openAdminSettings' },
     { path: '#reset-pos', icon: 'refresh-cw', label: 'Reset POS', roles: ['admin', 'manager'], action: 'openAdminResetPOS' },
     { path: '#pass-time', icon: 'clock', label: 'Part Time', roles: ['admin', 'manager'], action: 'openAdminPartTime' },
     { path: '#add-att', icon: 'plus-circle', label: 'Thêm giờ', roles: ['admin', 'manager'], action: 'openAdminAddAttendance' },
@@ -1548,6 +1549,105 @@ async function updatePartTimeAmount(recordId) {
     showToast('Da cap nhat so tien Part Time!');
   } catch {
     showToast('Khong the cap nhat', 'error');
+  }
+}
+
+/* ============================================
+   Admin: Settings
+   ============================================ */
+async function openAdminSettings() {
+  try {
+    const settings = await api.get('/settings');
+    renderSettingsForm(settings);
+    openModal('Cai Dat He Thong', `
+      <div id="settings-form-container"></div>
+    `, `
+      <button class="btn btn-ghost" onclick="closeModal()">Huy</button>
+      <button class="btn btn-primary" onclick="saveSettings()"><i data-lucide="save"></i> Luu thay doi</button>
+    `);
+    renderSettingsForm(settings);
+  } catch (err) {
+    showToast('Khong tai duoc cau hinh', 'error');
+  }
+}
+
+function renderSettingsForm(settings) {
+  const container = document.getElementById('settings-form-container');
+  if (!container) return;
+
+  const getVal = (key, fallback) => {
+    const s = settings.find(s => s.key === key);
+    return s ? s.value : fallback;
+  };
+
+  const startTime = getVal('work_start_time', '08:00');
+  const endTime = getVal('work_end_time', '17:00');
+  const tolerance = getVal('late_tolerance_minutes', 5);
+  const workDays = getVal('working_days', [1,2,3,4,5]);
+  const otRate = getVal('overtime_rate_per_hour', 30000);
+
+  const dayNames = ['Thu 2', 'Thu 3', 'Thu 4', 'Thu 5', 'Thu 6', 'Thu 7', 'CN'];
+  const dayCheckboxes = dayNames.map((name, i) => {
+    const dayNum = i + 1;
+    const checked = workDays.includes(dayNum) ? 'checked' : '';
+    return `<label style="display:flex;align-items:center;gap:4px;cursor:pointer">
+      <input type="checkbox" class="settings-work-day" value="${dayNum}" ${checked}>
+      ${name}
+    </label>`;
+  }).join('');
+
+  container.innerHTML = `
+    <div style="display:flex;flex-direction:column;gap:16px">
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Gio vao lam</label>
+          <input type="time" class="form-input" id="set-work-start" value="${startTime}">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Gio ra lam</label>
+          <input type="time" class="form-input" id="set-work-end" value="${endTime}">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Cho phep di muon (phut)</label>
+          <input type="number" class="form-input" id="set-tolerance" value="${tolerance}" min="0" max="60">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Tien tang ca (VNĐ/gio)</label>
+          <input type="number" class="form-input" id="set-ot-rate" value="${otRate}" min="0" step="1000">
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Ngay lam viec trong tuan</label>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;padding:8px;background:var(--bg);border-radius:var(--radius);border:1px solid var(--border)">
+          ${dayCheckboxes}
+        </div>
+      </div>
+    </div>
+  `;
+  lucide.createIcons();
+}
+
+async function saveSettings() {
+  const workDays = Array.from(document.querySelectorAll('.settings-work-day:checked'))
+    .map(el => parseInt(el.value))
+    .sort();
+
+  const data = {
+    work_start_time: document.getElementById('set-work-start').value,
+    work_end_time: document.getElementById('set-work-end').value,
+    late_tolerance_minutes: parseInt(document.getElementById('set-tolerance').value) || 5,
+    overtime_rate_per_hour: parseFloat(document.getElementById('set-ot-rate').value) || 30000,
+    working_days: workDays,
+  };
+
+  try {
+    await api.put('/settings', data);
+    closeModal();
+    showToast('Luu cau hinh thanh cong!');
+  } catch (err) {
+    showToast(err.message, 'error');
   }
 }
 

@@ -14,6 +14,7 @@ from backend.schemas import (
 from backend.auth import get_current_user, require_role, get_client_ip
 from backend.config import settings
 from backend.utils.qr_generator import generate_qr_code
+from backend.services.settings_service import get_work_start_time, get_work_end_time, get_late_tolerance
 
 router = APIRouter(prefix="/api/attendance", tags=["Attendance"])
 
@@ -79,10 +80,10 @@ def parse_time(t_str: str) -> time:
     return time(h, m)
 
 
-def determine_status(check_in: datetime, check_out: Optional[datetime]) -> AS:
-    work_start = parse_time(settings.WORK_START_TIME)
-    work_end = parse_time(settings.WORK_END_TIME)
-    tolerance = settings.LATE_TOLERANCE_MINUTES
+def determine_status(check_in: datetime, check_out: Optional[datetime], db: Session) -> AS:
+    work_start = parse_time(get_work_start_time(db))
+    work_end = parse_time(get_work_end_time(db))
+    tolerance = get_late_tolerance(db)
 
     check_in_time = check_in.time()
     check_in_local = check_in.replace(tzinfo=None) if check_in.tzinfo else check_in
@@ -275,13 +276,13 @@ async def check_in(
 
     if existing:
         existing.check_in = now
-        existing.status = determine_status(now, existing.check_out)
+        existing.status = determine_status(now, existing.check_out, db)
     else:
         record = AttendanceRecord(
             employee_id=employee.id,
             date=today,
             check_in=now,
-            status=determine_status(now, None),
+            status=determine_status(now, None, db),
             device_ip=client_ip
         )
         db.add(record)
@@ -292,7 +293,7 @@ async def check_in(
         message=f"Chấm công vào thành công",
         employee_name=employee.full_name,
         time=now,
-        status=determine_status(now, None).value
+        status=determine_status(now, None, db).value
     )
 
 
@@ -338,7 +339,7 @@ async def check_out(
         )
 
     record.check_out = now
-    record.status = determine_status(record.check_in, now)
+    record.status = determine_status(record.check_in, now, db)
     record.device_ip = client_ip
     db.commit()
 
@@ -447,9 +448,9 @@ async def update_attendance(
         setattr(record, key, value)
 
     if record.check_in and record.check_out:
-        record.status = determine_status(record.check_in, record.check_out)
+        record.status = determine_status(record.check_in, record.check_out, db)
     elif record.check_in:
-        record.status = determine_status(record.check_in, None)
+        record.status = determine_status(record.check_in, None, db)
 
     record.created_by = current_user.id
     db.commit()
@@ -578,9 +579,9 @@ async def admin_update_attendance(
         setattr(record, key, value)
 
     if record.check_in and record.check_out:
-        record.status = determine_status(record.check_in, record.check_out)
+        record.status = determine_status(record.check_in, record.check_out, db)
     elif record.check_in:
-        record.status = determine_status(record.check_in, None)
+        record.status = determine_status(record.check_in, None, db)
 
     record.created_by = current_user.id
     db.commit()

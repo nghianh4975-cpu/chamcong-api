@@ -3,7 +3,7 @@ from sqlalchemy import and_, func
 from typing import List, Optional
 from datetime import datetime, date, timedelta
 from backend.models import Employee, AttendanceRecord, AttendanceStatus, SalaryRecord, SalaryStatus, Setting
-from backend.routers.settings import get_setting_value
+from backend.services.settings_service import get_setting_value
 
 
 class SalaryService:
@@ -94,6 +94,7 @@ class SalaryService:
                 daily_rate = 0
                 late_deduction = 0
                 absent_deduction = 0
+                admin_deduction = existing.admin_deduction if existing else 0
                 overtime_pay = 0
 
             if existing:
@@ -123,7 +124,7 @@ class SalaryService:
                     late_deduction=0,
                     absent_days=absent_days,
                     absent_deduction=0,
-                    admin_deduction=0,
+                    admin_deduction=admin_deduction,
                     overtime_hours=overtime_hours,
                     overtime_pay=overtime_pay,
                     gross_salary=gross,
