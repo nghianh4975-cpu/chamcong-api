@@ -5,7 +5,7 @@ from typing import List, Optional
 from datetime import datetime, date
 from backend.database import get_db
 from backend.models import User, Employee, AttendanceRecord, AttendanceStatus, SalaryRecord, SalaryStatus
-from backend.schemas import SalaryRecordResponse
+from backend.schemas import SalaryRecordResponse, AdminDeductionRequest
 from backend.auth import require_role, get_current_user
 from backend.services.salary_service import SalaryService
 
@@ -95,6 +95,30 @@ async def update_salary(
     return salary_to_dict(record, emp)
 
 
+@router.put("/{salary_id}/admin-deduction", response_model=SalaryRecordResponse)
+async def set_admin_deduction(
+    salary_id: int,
+    deduction_request: AdminDeductionRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role("admin"))
+):
+    record = db.query(SalaryRecord).filter(SalaryRecord.id == salary_id).first()
+    if not record:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy bản ghi lương")
+
+    record.admin_deduction = deduction_request.deduction_amount
+    record.admin_deduction_reason = deduction_request.reason
+
+    record.gross_salary = record.base_salary + record.allowances - record.admin_deduction + record.overtime_pay
+    record.net_salary = max(0, record.gross_salary)
+
+    db.commit()
+    db.refresh(record)
+
+    emp = db.query(Employee).filter(Employee.id == record.employee_id).first()
+    return salary_to_dict(record, emp)
+
+
 def salary_to_dict(r: SalaryRecord, emp: Optional[Employee]) -> dict:
     return {
         "id": r.id,
@@ -105,9 +129,11 @@ def salary_to_dict(r: SalaryRecord, emp: Optional[Employee]) -> dict:
         "working_days": r.working_days,
         "actual_days": r.actual_days,
         "late_minutes": r.late_minutes,
-        "late_deduction": r.late_deduction,
+        "late_deduction": 0,
         "absent_days": r.absent_days,
-        "absent_deduction": r.absent_deduction,
+        "absent_deduction": 0,
+        "admin_deduction": r.admin_deduction,
+        "admin_deduction_reason": r.admin_deduction_reason,
         "overtime_hours": r.overtime_hours,
         "overtime_pay": r.overtime_pay,
         "gross_salary": r.gross_salary,

@@ -72,10 +72,12 @@ class SalaryService:
             # --- FULL TIME: tinh luong theo ngay ---
             if emp_type == "fulltime":
                 daily_rate = base_salary / work_days_count if work_days_count > 0 else 0
-                late_deduction = (total_late_minutes / 60) * self.get_setting("late_deduction_per_minute", 5000) * 60 / 60
-                absent_deduction = absent_days * daily_rate
+                # Khong tru tien tu dong - chi ghi nhan thong tin de admin xem
+                late_deduction = 0
+                absent_deduction = 0
+                admin_deduction = existing.admin_deduction if existing else 0
                 overtime_pay = overtime_hours * self.get_setting("overtime_rate_per_hour", 30000)
-                gross = base_salary + allowances - late_deduction - absent_deduction + overtime_pay
+                gross = base_salary + allowances - admin_deduction + overtime_pay
                 net = max(0, gross)
             # --- PART TIME: tinh = tong gio lam x luong/gio ---
             else:
@@ -101,9 +103,10 @@ class SalaryService:
                 existing.working_days = work_days_count
                 existing.actual_days = actual_days
                 existing.late_minutes = total_late_minutes
-                existing.late_deduction = late_deduction
+                existing.late_deduction = 0
                 existing.absent_days = absent_days
-                existing.absent_deduction = absent_deduction
+                existing.absent_deduction = 0
+                existing.admin_deduction = admin_deduction
                 existing.overtime_hours = overtime_hours
                 existing.overtime_pay = overtime_pay
                 existing.gross_salary = gross
@@ -118,9 +121,10 @@ class SalaryService:
                     working_days=work_days_count,
                     actual_days=actual_days,
                     late_minutes=total_late_minutes,
-                    late_deduction=late_deduction,
+                    late_deduction=0,
                     absent_days=absent_days,
-                    absent_deduction=absent_deduction,
+                    absent_deduction=0,
+                    admin_deduction=0,
                     overtime_hours=overtime_hours,
                     overtime_pay=overtime_pay,
                     gross_salary=gross,
@@ -154,12 +158,13 @@ class SalaryService:
                 "allowances": record.allowances,
                 "working_days": record.working_days,
                 "actual_days": record.actual_days,
-                "late_minutes": record.late_minutes,
-                "late_deduction": record.late_deduction,
-                "absent_days": record.absent_days,
-                "absent_deduction": record.absent_deduction,
-                "overtime_hours": record.overtime_hours,
-                "overtime_pay": record.overtime_pay,
+                "late_minutes": total_late_minutes,
+                "late_deduction": 0,
+                "absent_days": absent_days,
+                "absent_deduction": 0,
+                "admin_deduction": record.admin_deduction,
+                "overtime_hours": overtime_hours,
+                "overtime_pay": overtime_pay,
                 "pass_time_total": total_hours,
                 "gross_salary": record.gross_salary,
                 "net_salary": record.net_salary,

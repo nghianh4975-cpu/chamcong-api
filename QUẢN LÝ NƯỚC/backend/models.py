@@ -116,6 +116,8 @@ class SalaryRecord(Base):
     late_deduction = Column(Float, default=0)
     absent_days = Column(Float, default=0)
     absent_deduction = Column(Float, default=0)
+    admin_deduction = Column(Float, default=0)
+    admin_deduction_reason = Column(Text, nullable=True)
     overtime_hours = Column(Float, default=0)
     overtime_pay = Column(Float, default=0)
     gross_salary = Column(Float, default=0)

@@ -179,6 +179,8 @@ class SalaryRecordResponse(BaseModel):
     late_deduction: float
     absent_days: float
     absent_deduction: float
+    admin_deduction: float
+    admin_deduction_reason: Optional[str] = None
     overtime_hours: float
     overtime_pay: float
     gross_salary: float
@@ -186,6 +188,11 @@ class SalaryRecordResponse(BaseModel):
     status: SalaryStatus
     notes: Optional[str]
     employee: Optional[EmployeeResponse] = None
+
+
+class AdminDeductionRequest(BaseModel):
+    deduction_amount: float = Field(ge=0, description="Số tiền trừ lương (VNĐ)")
+    reason: Optional[str] = Field(None, description="Lý do trừ lương")
 
 
 # --- Reports ---
