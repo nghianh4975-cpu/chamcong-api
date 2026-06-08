@@ -1,0 +1,3 @@
+# Procfile for Railway
+# Railway sẽ chạy lệnh này để khởi động web server
+web: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
