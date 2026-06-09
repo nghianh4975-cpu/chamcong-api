@@ -14,7 +14,10 @@ from backend.schemas import (
 from backend.auth import get_current_user, require_role, get_client_ip
 from backend.config import settings
 from backend.utils.qr_generator import generate_qr_code
-from backend.services.settings_service import get_work_start_time, get_work_end_time, get_late_tolerance
+from backend.services.settings_service import (
+    get_work_start_time, get_work_end_time, get_late_tolerance,
+    get_shifts, get_shift_by_id, get_default_shift
+)
 
 router = APIRouter(prefix="/api/attendance", tags=["Attendance"])
 
@@ -76,21 +79,36 @@ def _verify_and_invalidate(db: Session, qr_data: str, employee_code: str, pin_co
 
 
 def parse_time(t_str: str) -> time:
-    h, m = map(int, t_str.split(":"))
+    parts = t_str.split(":")
+    h, m = int(parts[0]), int(parts[1])
     return time(h, m)
 
 
-def determine_status(check_in: datetime, check_out: Optional[datetime], db: Session) -> AS:
-    work_start = parse_time(get_work_start_time(db))
-    work_end = parse_time(get_work_end_time(db))
-    tolerance = get_late_tolerance(db)
+def _time_to_minutes(t: time) -> int:
+    return t.hour * 60 + t.minute
 
-    check_in_time = check_in.time()
+
+def determine_status(check_in: datetime, check_out: Optional[datetime], db: Session, shift_id: str = "default") -> AS:
+    if shift_id == "default":
+        work_start_str = get_work_start_time(db)
+        work_end_str = get_work_end_time(db)
+        tolerance = get_late_tolerance(db)
+    else:
+        shift = get_shift_by_id(db, shift_id)
+        if shift:
+            work_start_str = shift["start"]
+            work_end_str = shift["end"]
+            tolerance = get_late_tolerance(db)
+        else:
+            work_start_str = get_work_start_time(db)
+            work_end_str = get_work_end_time(db)
+            tolerance = get_late_tolerance(db)
+
+    work_start = parse_time(work_start_str)
+    work_end = parse_time(work_end_str)
     check_in_local = check_in.replace(tzinfo=None) if check_in.tzinfo else check_in
     start_dt = datetime.combine(check_in.date(), work_start)
-    tolerance_dt = datetime.combine(check_in.date(), work_start.replace(
-        minute=work_start.minute + tolerance
-    ))
+    tolerance_dt = start_dt + timedelta(minutes=tolerance)
 
     if check_in_local > tolerance_dt:
         base_status = AS.LATE
@@ -99,8 +117,17 @@ def determine_status(check_in: datetime, check_out: Optional[datetime], db: Sess
 
     if check_out:
         out_time = check_out.time()
-        if out_time < work_end:
-            base_status = AS.EARLY_LEAVE
+        # Cross-midnight shift (e.g. Ca 3: 22:00 -> 06:00)
+        start_min = _time_to_minutes(work_start)
+        end_min = _time_to_minutes(work_end)
+        out_min = _time_to_minutes(out_time)
+        if start_min > end_min:
+            # Shift crosses midnight
+            if out_min < start_min and out_min >= end_min:
+                base_status = AS.EARLY_LEAVE
+        else:
+            if out_min < end_min:
+                base_status = AS.EARLY_LEAVE
 
     return base_status
 
@@ -169,6 +196,9 @@ async def pos_scan_reveal(
     # Lấy request IP
     client_ip = get_client_ip(request)
 
+    # Lấy shifts để frontend hiển thị
+    shifts = get_shifts(db)
+
     return {
         "valid": True,
         "reveal": {
@@ -176,7 +206,8 @@ async def pos_scan_reveal(
             "pin_prompt": "Nhập mã PIN 1 lần bên dưới",
             "one_time_pin": key.one_time_pin,
             "login_url": f"https://{client_ip}:8443",
-        }
+        },
+        "shifts": shifts,
     }
 
 
@@ -194,7 +225,6 @@ async def check_in(
         parts = data.qr_data.split(":")
 
         if len(parts) == 3 and parts[0] == "POS":
-            # QR từ máy POS: verify key + employee
             today = date.today()
             daily_key = db.query(DailyPOSKey).filter(
                 DailyPOSKey.date == today,
@@ -207,19 +237,12 @@ async def check_in(
                     detail="Mã QR POS không hợp lệ hoặc đã hết hạn ngày"
                 )
 
-            if daily_key.used:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Mã QR đã được sử dụng cho ca làm việc này. Không thể check-in lại."
-                )
-
             if not data.employee_code or not data.pin_code:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Thiếu mã nhân viên hoặc mã PIN"
                 )
 
-            # Tìm nhân viên
             employee = db.query(Employee).filter(
                 Employee.employee_code == data.employee_code
             ).first()
@@ -230,18 +253,16 @@ async def check_in(
                     detail="Mã nhân viên không đúng"
                 )
 
-            # Verify PIN 1 lần
             if data.pin_code != daily_key.one_time_pin:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Mã nhân viên hoặc mã PIN không đúng"
                 )
 
-            # Đánh dấu key đã dùng
-            daily_key.used = True
+            # NOTE: KHÔNG đánh dấu used=True ở đây nữa
+            # Mỗi nhân viên dùng PIN 1 lần riêng → key chỉ bị vô hiệu khi đã check-out
 
         elif len(parts) >= 2 and parts[0] == "CHAMCONG":
-            # QR cá nhân
             employee = db.query(Employee).filter(
                 Employee.employee_code == parts[1]
             ).first()
@@ -261,39 +282,77 @@ async def check_in(
 
     today = date.today()
     now = datetime.now(VN_TZ)
+    shift_id = data.shift or "default"
 
-    existing = db.query(AttendanceRecord).filter(
-        AttendanceRecord.employee_id == employee.id,
-        AttendanceRecord.date == today
-    ).first()
+    # Full-time: 1 bản ghi/ngày. Part-time: nhiều bản ghi theo ca.
+    emp_type = employee.employee_type or "fulltime"
 
-    if existing and existing.check_in:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Bạn đã chấm công vào lúc {existing.check_in.strftime('%H:%M:%S')}. "
-                   f"Hãy dùng chấm công ra."
-        )
+    if emp_type == "fulltime":
+        # Full-time: tìm bản ghi hôm nay (bất kể ca nào)
+        existing = db.query(AttendanceRecord).filter(
+            AttendanceRecord.employee_id == employee.id,
+            AttendanceRecord.date == today
+        ).first()
 
-    if existing:
-        existing.check_in = now
-        existing.status = determine_status(now, existing.check_out, db)
+        if existing and existing.check_in:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Bạn đã chấm công vào lúc {existing.check_in.strftime('%H:%M:%S')}. "
+                       f"Hãy dùng chấm công ra."
+            )
+
+        if existing:
+            existing.check_in = now
+            existing.status = determine_status(now, existing.check_out, db, shift_id)
+            record = existing
+        else:
+            record = AttendanceRecord(
+                employee_id=employee.id,
+                date=today,
+                shift=shift_id,
+                check_in=now,
+                status=determine_status(now, None, db, shift_id),
+                device_ip=client_ip
+            )
+            db.add(record)
     else:
-        record = AttendanceRecord(
-            employee_id=employee.id,
-            date=today,
-            check_in=now,
-            status=determine_status(now, None, db),
-            device_ip=client_ip
-        )
-        db.add(record)
+        # Part-time: tìm bản ghi theo đúng ca hôm nay
+        existing = db.query(AttendanceRecord).filter(
+            AttendanceRecord.employee_id == employee.id,
+            AttendanceRecord.date == today,
+            AttendanceRecord.shift == shift_id
+        ).first()
+
+        if existing and existing.check_in:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Ca {shift_id} đã chấm vào lúc {existing.check_in.strftime('%H:%M:%S')}. "
+                       f"Hãy dùng chấm ra."
+            )
+
+        if existing:
+            existing.check_in = now
+            existing.status = determine_status(now, existing.check_out, db, shift_id)
+            record = existing
+        else:
+            record = AttendanceRecord(
+                employee_id=employee.id,
+                date=today,
+                shift=shift_id,
+                check_in=now,
+                status=determine_status(now, None, db, shift_id),
+                device_ip=client_ip
+            )
+            db.add(record)
 
     db.commit()
+    db.refresh(record)
     return CheckInResponse(
         success=True,
         message=f"Chấm công vào thành công",
         employee_name=employee.full_name,
         time=now,
-        status=determine_status(now, None, db).value
+        status=determine_status(now, None, db, shift_id).value
     )
 
 
@@ -326,11 +385,22 @@ async def check_out(
 
     today = date.today()
     now = datetime.now(VN_TZ)
+    shift_id = data.shift or "default"
 
-    record = db.query(AttendanceRecord).filter(
-        AttendanceRecord.employee_id == employee.id,
-        AttendanceRecord.date == today
-    ).first()
+    emp_type = employee.employee_type or "fulltime"
+
+    if emp_type == "fulltime":
+        record = db.query(AttendanceRecord).filter(
+            AttendanceRecord.employee_id == employee.id,
+            AttendanceRecord.date == today
+        ).first()
+    else:
+        # Part-time: tìm đúng ca
+        record = db.query(AttendanceRecord).filter(
+            AttendanceRecord.employee_id == employee.id,
+            AttendanceRecord.date == today,
+            AttendanceRecord.shift == shift_id
+        ).first()
 
     if not record or not record.check_in:
         raise HTTPException(
@@ -339,8 +409,20 @@ async def check_out(
         )
 
     record.check_out = now
-    record.status = determine_status(record.check_in, now, db)
+    record.status = determine_status(record.check_in, now, db, record.shift)
     record.device_ip = client_ip
+
+    # Đánh dấu POS key đã dùng khi check-out xong (chỉ cho part-time)
+    if data.qr_data and emp_type == "parttime":
+        parts = data.qr_data.split(":")
+        if len(parts) == 3 and parts[0] == "POS":
+            daily_key = db.query(DailyPOSKey).filter(
+                DailyPOSKey.date == today,
+                DailyPOSKey.qr_data == data.qr_data
+            ).first()
+            if daily_key:
+                daily_key.used = True
+
     db.commit()
 
     return CheckInResponse(
@@ -387,6 +469,7 @@ async def list_attendance(
             "id": r.id,
             "employee_id": r.employee_id,
             "date": r.date,
+            "shift": r.shift or "default",
             "check_in": r.check_in,
             "check_out": r.check_out,
             "status": r.status,
@@ -424,6 +507,7 @@ async def my_attendance(
         {
             "id": r.id,
             "date": r.date,
+            "shift": r.shift or "default",
             "check_in": r.check_in,
             "check_out": r.check_out,
             "status": r.status.value,
@@ -448,9 +532,9 @@ async def update_attendance(
         setattr(record, key, value)
 
     if record.check_in and record.check_out:
-        record.status = determine_status(record.check_in, record.check_out, db)
+        record.status = determine_status(record.check_in, record.check_out, db, record.shift)
     elif record.check_in:
-        record.status = determine_status(record.check_in, None, db)
+        record.status = determine_status(record.check_in, None, db, record.shift)
 
     record.created_by = current_user.id
     db.commit()
@@ -576,12 +660,15 @@ async def admin_update_attendance(
 
     update_data = data.model_dump(exclude_unset=True)
     for key, value in update_data.items():
+        # Attach timezone to naive datetime inputs from admin
+        if key in ("check_in", "check_out") and value and not hasattr(value, 'tzinfo'):
+            value = value.replace(tzinfo=VN_TZ)
         setattr(record, key, value)
 
     if record.check_in and record.check_out:
-        record.status = determine_status(record.check_in, record.check_out, db)
+        record.status = determine_status(record.check_in, record.check_out, db, record.shift)
     elif record.check_in:
-        record.status = determine_status(record.check_in, None, db)
+        record.status = determine_status(record.check_in, None, db, record.shift)
 
     record.created_by = current_user.id
     db.commit()
@@ -634,6 +721,7 @@ async def admin_list_part_time(
     return [{
         "id": r.id,
         "date": r.date.isoformat(),
+        "shift": r.shift or "default",
         "pass_time_amount": r.pass_time_amount,
         "notes": r.notes,
         "employee": {

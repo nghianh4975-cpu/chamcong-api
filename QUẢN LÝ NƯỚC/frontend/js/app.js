@@ -668,6 +668,8 @@ async function renderAttendanceHistory() {
    ============================================ */
 let posCurrentQR = '';
 let posKeyInfo = null;
+let posCurrentShift = 'default';
+let posShifts = [];
 
 async function renderPOS() {
   // Lấy thông tin key hôm nay từ server
@@ -742,19 +744,28 @@ async function renderPOS() {
           <div id="pos-input-area">
             <hr class="attendance-divider">
             <div class="attendance-input-group">
-              <label class="form-label">Mã nhân viên</label>
+              <label class="form-label">Chon ca lam viec</label>
+              <select class="form-select" id="pos-shift-select" onchange="posCurrentShift = this.value">
+                <option value="default">Mac dinh</option>
+                <option value="ca1">Ca 1 (06:00 - 14:00)</option>
+                <option value="ca2">Ca 2 (14:00 - 22:00)</option>
+                <option value="ca3">Ca 3 (22:00 - 06:00)</option>
+              </select>
+            </div>
+            <div class="attendance-input-group">
+              <label class="form-label">Ma nhan vien</label>
               <input type="text" class="form-input" id="pos-emp-code" placeholder="VD: NV001" autocomplete="off">
             </div>
             <div class="attendance-input-group">
-              <label class="form-label">Mã PIN</label>
-              <input type="password" class="form-input" id="pos-pin" placeholder="Nhập mã PIN" autocomplete="off">
+              <label class="form-label">Ma PIN</label>
+              <input type="password" class="form-input" id="pos-pin" placeholder="Nhap ma PIN" autocomplete="off">
             </div>
             <div class="pos-buttons">
               <button class="btn btn-primary btn-lg" onclick="handlePOSCheckIn()">
-                <i data-lucide="log-in"></i> Chấm vào
+                <i data-lucide="log-in"></i> Cham vao
               </button>
               <button class="btn btn-danger btn-lg" onclick="handlePOSCheckOut()">
-                <i data-lucide="log-out"></i> Chấm ra
+                <i data-lucide="log-out"></i> Cham ra
               </button>
             </div>
           </div>
@@ -787,6 +798,14 @@ async function initPOSScanner() {
         try {
           const reveal = await api.post('/attendance/pos-scan-reveal', { qr_data: decodedText });
           posCurrentQR = decodedText;
+          posShifts = reveal.shifts || [];
+          posCurrentShift = 'default';
+          const shiftSelect = document.getElementById('pos-shift-select');
+          if (shiftSelect) {
+            shiftSelect.innerHTML = '<option value="default">Mac dinh</option>' +
+              posShifts.map(s => `<option value="${s.id}">${s.name} (${s.start} - ${s.end})</option>`).join('');
+            shiftSelect.value = 'default';
+          }
 
           document.getElementById('pos-reveal-area').style.display = 'block';
           document.getElementById('pos-input-area').style.display = 'none';
@@ -831,7 +850,8 @@ async function handlePOSCheckIn() {
     const data = await api.post('/attendance/check-in', {
       qr_data: posCurrentQR || undefined,
       employee_code: code,
-      pin_code: pin
+      pin_code: pin,
+      shift: posCurrentShift,
     });
     result.className = 'attendance-result success';
     result.innerHTML = `<div class="check-animation"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"></polyline></svg></div>
@@ -850,7 +870,7 @@ async function handlePOSCheckOut() {
   const code = document.getElementById('pos-emp-code').value.trim();
   const pin = document.getElementById('pos-pin').value.trim();
   const result = document.getElementById('pos-result');
-  if (!code || !pin) { showToast('Vui lòng nhập mã NV và mã PIN', 'error'); return; }
+  if (!code) { showToast('Vui lòng nhập mã NV', 'error'); return; }
   result.className = 'attendance-result';
   result.style.display = 'block';
   result.innerHTML = '<div class="text-center"><span class="spinner dark"></span></div>';
@@ -858,7 +878,8 @@ async function handlePOSCheckOut() {
     const data = await api.post('/attendance/check-out', {
       qr_data: posCurrentQR || undefined,
       employee_code: code,
-      pin_code: pin
+      pin_code: pin,
+      shift: posCurrentShift,
     });
     result.className = 'attendance-result success';
     result.innerHTML = `<div class="check-animation"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"></polyline></svg></div>
@@ -1585,6 +1606,11 @@ function renderSettingsForm(settings) {
   const tolerance = getVal('late_tolerance_minutes', 5);
   const workDays = getVal('working_days', [1,2,3,4,5]);
   const otRate = getVal('overtime_rate_per_hour', 30000);
+  const shifts = getVal('shifts', [
+    {id: 'ca1', name: 'Ca 1', start: '06:00', end: '14:00'},
+    {id: 'ca2', name: 'Ca 2', start: '14:00', end: '22:00'},
+    {id: 'ca3', name: 'Ca 3', start: '22:00', end: '06:00'},
+  ]);
 
   const dayNames = ['Thu 2', 'Thu 3', 'Thu 4', 'Thu 5', 'Thu 6', 'Thu 7', 'CN'];
   const dayCheckboxes = dayNames.map((name, i) => {
@@ -1596,37 +1622,99 @@ function renderSettingsForm(settings) {
     </label>`;
   }).join('');
 
+  const shiftRows = shifts.map((s, i) => `
+    <div class="shift-row" style="display:flex;gap:8px;align-items:center;margin-bottom:8px" data-idx="${i}">
+      <input type="text" class="form-input shift-name" value="${s.name}" placeholder="Ten ca" style="width:100px">
+      <input type="time" class="form-input shift-start" value="${s.start}">
+      <span style="color:var(--text-secondary)">den</span>
+      <input type="time" class="form-input shift-end" value="${s.end}">
+      <button type="button" class="btn btn-ghost btn-sm" onclick="removeShiftRow(${i})" style="color:var(--danger);padding:4px 8px">
+        <i data-lucide="trash-2" style="width:14px;height:14px"></i>
+      </button>
+    </div>`).join('');
+
   container.innerHTML = `
-    <div style="display:flex;flex-direction:column;gap:16px">
-      <div class="form-row">
-        <div class="form-group">
-          <label class="form-label">Gio vao lam</label>
-          <input type="time" class="form-input" id="set-work-start" value="${startTime}">
-        </div>
-        <div class="form-group">
-          <label class="form-label">Gio ra lam</label>
-          <input type="time" class="form-input" id="set-work-end" value="${endTime}">
+    <div style="display:flex;flex-direction:column;gap:20px">
+      <div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:12px 14px;font-size:13px;color:#92400e">
+        <strong>Chi ap dung cho nhan vien Full Time.</strong> Nhan vien Part Time su dung cau hinh <strong>Ca lam viec</strong> ben duoi.
+      </div>
+
+      <div>
+        <div class="form-label" style="margin-bottom:8px;font-weight:600">Gio mac dinh (Full Time)</div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Gio vao</label>
+            <input type="time" class="form-input" id="set-work-start" value="${startTime}">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Gio ra</label>
+            <input type="time" class="form-input" id="set-work-end" value="${endTime}">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Cho muon (phut)</label>
+            <input type="number" class="form-input" id="set-tolerance" value="${tolerance}" min="0" max="60">
+          </div>
         </div>
       </div>
-      <div class="form-row">
-        <div class="form-group">
-          <label class="form-label">Cho phep di muon (phut)</label>
-          <input type="number" class="form-input" id="set-tolerance" value="${tolerance}" min="0" max="60">
-        </div>
-        <div class="form-group">
-          <label class="form-label">Tien tang ca (VNĐ/gio)</label>
-          <input type="number" class="form-input" id="set-ot-rate" value="${otRate}" min="0" step="1000">
-        </div>
-      </div>
+
       <div class="form-group">
-        <label class="form-label">Ngay lam viec trong tuan</label>
+        <label class="form-label">Ngay lam viec</label>
         <div style="display:flex;gap:12px;flex-wrap:wrap;padding:8px;background:var(--bg);border-radius:var(--radius);border:1px solid var(--border)">
           ${dayCheckboxes}
         </div>
       </div>
+
+      <div class="form-group">
+        <label class="form-label">Tien tang ca (VNĐ/gio)</label>
+        <input type="number" class="form-input" id="set-ot-rate" value="${otRate}" min="0" step="1000" style="width:180px">
+      </div>
+
+      <div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div class="form-label" style="font-weight:600">Ca lam viec (cho Part Time / Tuyết Hồng)</div>
+          <button type="button" class="btn btn-outline btn-sm" onclick="addShiftRow()">
+            <i data-lucide="plus" style="width:14px;height:14px"></i> Them ca
+          </button>
+        </div>
+        <div id="shift-rows-container" style="border:1px solid var(--border);border-radius:var(--radius);padding:12px;background:var(--bg)">
+          ${shiftRows || '<p style="color:var(--text-secondary);font-size:13px;text-align:center">Chua co ca nao</p>'}
+        </div>
+        <p style="font-size:11px;color:var(--text-secondary);margin-top:4px">
+          VD: Ca 1 = 06:00 den 14:00, Ca 2 = 14:00 den 22:00, Ca 3 = 22:00 den 06:00 (sang hom sau)
+        </p>
+      </div>
     </div>
   `;
   lucide.createIcons();
+}
+
+function addShiftRow() {
+  const container = document.getElementById('shift-rows-container');
+  const idx = container.querySelectorAll('.shift-row').length;
+  const newRow = document.createElement('div');
+  newRow.className = 'shift-row';
+  newRow.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:8px';
+  newRow.dataset.idx = idx;
+  newRow.innerHTML = `
+    <input type="text" class="form-input shift-name" placeholder="Ten ca (VD: Ca 1)" style="width:100px">
+    <input type="time" class="form-input shift-start" value="08:00">
+    <span style="color:var(--text-secondary)">den</span>
+    <input type="time" class="form-input shift-end" value="17:00">
+    <button type="button" class="btn btn-ghost btn-sm" onclick="removeShiftRow(${idx})" style="color:var(--danger);padding:4px 8px">
+      <i data-lucide="trash-2" style="width:14px;height:14px"></i>
+    </button>
+  `;
+  container.appendChild(newRow);
+  lucide.createIcons();
+}
+
+function removeShiftRow(idx) {
+  const rows = document.querySelectorAll('.shift-row');
+  if (rows.length <= 1) {
+    showToast('Phai co it nhat 1 ca', 'error');
+    return;
+  }
+  rows[idx]?.remove();
 }
 
 async function saveSettings() {
@@ -1634,12 +1722,22 @@ async function saveSettings() {
     .map(el => parseInt(el.value))
     .sort();
 
+  // Collect shifts
+  const rows = document.querySelectorAll('.shift-row');
+  const shifts = Array.from(rows).map((row, i) => ({
+    id: `ca${i + 1}`,
+    name: row.querySelector('.shift-name').value || `Ca ${i + 1}`,
+    start: row.querySelector('.shift-start').value || '08:00',
+    end: row.querySelector('.shift-end').value || '17:00',
+  }));
+
   const data = {
     work_start_time: document.getElementById('set-work-start').value,
     work_end_time: document.getElementById('set-work-end').value,
     late_tolerance_minutes: parseInt(document.getElementById('set-tolerance').value) || 5,
     overtime_rate_per_hour: parseFloat(document.getElementById('set-ot-rate').value) || 30000,
     working_days: workDays,
+    shifts: shifts,
   };
 
   try {

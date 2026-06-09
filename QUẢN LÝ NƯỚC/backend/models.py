@@ -88,6 +88,7 @@ class AttendanceRecord(Base):
     id = Column(Integer, primary_key=True, index=True)
     employee_id = Column(Integer, ForeignKey("employees.id"), nullable=False)
     date = Column(Date, nullable=False)
+    shift = Column(String(20), default="default")  # ca làm việc: default | ca1 | ca2 | ca3
     check_in = Column(DateTime(timezone=True))
     check_out = Column(DateTime(timezone=True))
     status = Column(Enum(AttendanceStatus), default=AttendanceStatus.ON_TIME)

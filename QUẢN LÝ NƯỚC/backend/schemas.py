@@ -118,6 +118,7 @@ class CheckInRequest(BaseModel):
     employee_code: Optional[str] = None
     pin_code: Optional[str] = None
     qr_data: Optional[str] = None
+    shift: Optional[str] = None
 
 
 class PassTimeAmountRequest(BaseModel):
@@ -143,6 +144,7 @@ class AttendanceRecordCreate(BaseModel):
 
 
 class AttendanceRecordUpdate(BaseModel):
+    shift: Optional[str] = None
     check_in: Optional[datetime] = None
     check_out: Optional[datetime] = None
     status: Optional[AttendanceStatus] = None
@@ -155,6 +157,7 @@ class AttendanceRecordResponse(BaseModel):
     id: int
     employee_id: int
     date: date
+    shift: str = "default"
     check_in: Optional[datetime]
     check_out: Optional[datetime]
     status: AttendanceStatus

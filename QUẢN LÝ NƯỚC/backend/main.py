@@ -40,6 +40,12 @@ async def lifespan(app: FastAPI):
             conn.commit()
         except Exception:
             pass
+        # Migration: thêm cột shift nếu chưa có
+        try:
+            conn.execute(text("ALTER TABLE attendance_records ADD COLUMN shift VARCHAR(20) DEFAULT 'default'"))
+            conn.commit()
+        except Exception:
+            pass
 
     from backend.database import SessionLocal
     db = SessionLocal()
